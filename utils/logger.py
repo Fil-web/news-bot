@@ -1,24 +1,24 @@
-# logger.py
-import logging
-import os
+from __future__ import annotations
 
-# Настройка логирования
-def setup_logging():
-    """
-    Настройка логирования.
-    Логи записываются в файл bot.log.
-    """
+import logging
+from pathlib import Path
+
+LOG_PATH = Path(__file__).resolve().parent / "bot.log"
+
+
+def setup_logging() -> logging.Logger:
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
-        level=logging.INFO,  # Уровень логирования
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",  # Формат логов
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
-            logging.FileHandler("utils/test.log"),  # Записываем логи в файл
-            logging.StreamHandler()  # Выводим логи в консоль (опционально)
-        ]
+            logging.FileHandler(LOG_PATH, encoding="utf-8"),
+            logging.StreamHandler(),
+        ],
     )
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger("news_bot")
     logger.info("Логирование настроено.")
     return logger
 
-# Инициализация логгера
+
 logger = setup_logging()

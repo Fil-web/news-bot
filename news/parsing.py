@@ -1,84 +1,98 @@
-import requests
-from bs4 import BeautifulSoup as BS
+from __future__ import annotations
+
 import json
+from pathlib import Path
+from typing import Any
+
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
 
-# Базовый URL для парсинга
-base_url = "https://zab.ru/news/"
+BASE_URL = "https://zab.ru/news/"
+DEFAULT_TIMEOUT = 30
+DATA_DIR = Path(__file__).resolve().parents[1] / "database"
+JSON_PATH = DATA_DIR / "book.json"
+XLSX_PATH = DATA_DIR / "book.xlsx"
 
-# Получаем содержимое страницы
-page = requests.get(base_url)
-src = page.text
-print(src)
 
-# Сохраняем HTML в файл (для отладки)
-# with open("news/parsing.html", "w") as file:
-#     file.write(src)
+def fetch_news_html(timeout: int = DEFAULT_TIMEOUT) -> str:
+    response = requests.get(
+        BASE_URL,
+        timeout=timeout,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            )
+        },
+    )
+    response.raise_for_status()
+    return response.text
 
-# Читаем HTML из файла (если нужно)
-with open("news/parsing.html") as file:
-    src = file.read()
 
-# Парсим HTML-код страницы
-soup = BS(src, "lxml")
+def parse_news_from_html(src: str) -> list[dict[str, str]]:
+    soup = BeautifulSoup(src, "lxml")
+    news_cards = soup.find_all("a", class_="zab-news__link-main")
 
-# Ищем все карточки с новостями
-news_cards = soup.find_all('a', class_='zab-news__link-main')
+    news_items: list[dict[str, str]] = []
+    seen_links: set[str] = set()
 
-# Создаем словарь для хранения данных
-news_dict = {}
+    for card in news_cards:
+        title_el = card.find("h2", class_="zab-news__title-light")
+        date_el = card.find("span", class_="zab-news__info-date")
+        description_el = card.find("div", class_="zab-news__description")
 
-# Извлекаем информацию и добавляем в словарь
-for card in news_cards:
-    # Парсим заголовок новости
-    title = card.find('h2', class_='zab-news__title-light')
-    if title:
-        title = title.text.strip()
-    else:
-        title = "Заголовок не указан"
+        title = title_el.text.strip() if title_el else "Заголовок не указан"
+        published_at = date_el.text.strip() if date_el else "Дата не указана"
+        description = (
+            description_el.text.strip() if description_el else "Описание не указано"
+        )
+        link = (card.get("href") or "").strip()
 
-    # Парсим дату новости
-    date = card.find('span', class_='zab-news__info-date')
-    if date:
-        date = date.text.strip()
-    else:
-        date = "Дата не указана"
+        if link and link.startswith("/"):
+            link = f"https://zab.ru{link}"
+        if not link:
+            link = "Ссылка не указана"
 
-    # Парсим краткое описание новости
-    description = card.find('div', class_='zab-news__description')
-    if description:
-        description = description.text.strip()
-    else:
-        description = "Описание не указано"
+        if link in seen_links:
+            continue
+        seen_links.add(link)
 
-    # Парсим ссылку на новость
-    news_href = card.get('href')
-    if not news_href:
-        news_href = "Ссылка не указана"
+        news_items.append(
+            {
+                "Заголовок": title,
+                "Дата": published_at,
+                "Описание": description,
+                "Ссылка": link,
+            }
+        )
 
-    # Выводим результат
-    print(f"Заголовок: {title}")
-    print(f"Дата: {date}")
-    print(f"Описание: {description}")
-    print(f"Ссылка: {news_href}")
-    print("-" * 50)
+    return news_items
 
-    # Добавляем данные в словарь
-    news_dict[title] = {
-        "Заголовок": title,
-        "Дата": date,
-        "Описание": description,
-        "Ссылка": news_href
+
+def save_news(news_items: list[dict[str, str]]) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    payload: dict[str, Any] = {
+        "items": news_items,
+        "count": len(news_items),
     }
+    JSON_PATH.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=4),
+        encoding="utf-8",
+    )
 
-# Сохраняем словарь в JSON-файл (для отладки)
-with open("database/book.json", "w") as file:
-    json.dump(news_dict, file, indent=4, ensure_ascii=False)
+    df = pd.DataFrame(news_items)
+    df.to_excel(XLSX_PATH, index=False)
 
-# Преобразуем словарь в DataFrame
-df = pd.DataFrame.from_dict(news_dict, orient='index')
 
-# Сохраняем DataFrame в Excel-файл
-df.to_excel("database/book.xlsx", index=False)
+def fetch_and_save_news(timeout: int = DEFAULT_TIMEOUT) -> list[dict[str, str]]:
+    html = fetch_news_html(timeout=timeout)
+    news_items = parse_news_from_html(html)
+    save_news(news_items)
+    return news_items
 
-print("Данные успешно сохранены в zab_news.xlsx")
+
+if __name__ == "__main__":
+    news = fetch_and_save_news()
+    print(f"Сохранено новостей: {len(news)}")
